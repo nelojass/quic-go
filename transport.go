@@ -75,6 +75,9 @@ type Transport struct {
 	// If unset, a 4 byte connection ID will be used.
 	ConnectionIDLength int
 
+	//todo: determine wheather the data is other protocol
+	IsOtherProtocol func(data []byte, addr net.Addr, isActiveConn bool) bool
+
 	// Use for generating new connection IDs.
 	// This allows the application to control of the connection IDs used,
 	// which allows routing / load balancing based on connection IDs.
@@ -571,21 +574,32 @@ func (t *Transport) handlePacket(p receivedPacket) {
 	connID, err := wire.ParseConnectionID(p.data, t.connIDLen)
 	if err != nil {
 		t.logger.Debugf("error parsing connection ID on packet from %s: %s", p.remoteAddr, err)
-		if t.Tracer != nil {
+		/*if t.Tracer != nil {
 			t.Tracer.RecordEvent(qlog.PacketDropped{
 				Raw:     qlog.RawInfo{Length: int(p.Size())},
 				Trigger: qlog.PacketDropHeaderParseError,
 			})
 		}
-		p.buffer.MaybeRelease()
+		p.buffer.MaybeRelease()*/
+		//todo: determine wheather the data is other protocol
+		t.handleNonQUICPacket(p)
 		return
 	}
+
+	var ok bool
 
 	// If there's a connection associated with the connection ID, pass the packet there.
 	if handler, ok := (*packetHandlerMap)(t).Get(connID); ok {
 		handler.handlePacket(p)
 		return
 	}
+
+	//todo: determine wheather the data is other protocol
+	if t.IsOtherProtocol != nil && t.IsOtherProtocol(p.data, p.remoteAddr, ok) {
+		t.handleNonQUICPacket(p)
+		return
+	}
+
 	// RFC 9000 section 10.3.1 requires that the stateless reset detection logic is run for both
 	// packets that cannot be associated with any connections, and for packets that can't be decrypted.
 	// We deviate from the RFC and ignore the latter: If a packet's connection ID is associated with an
